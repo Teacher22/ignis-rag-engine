@@ -1,0 +1,19 @@
+{
+  "name": "ignis-rag-engine",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspaces",
+    "migrate": "npm run migrate --workspace=apps/api",
+    "setup:qdrant": "npm run setup:qdrant --workspace=apps/api"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
