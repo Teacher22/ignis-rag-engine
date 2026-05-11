@@ -2,8 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { getDb } from '../lib/db';
 import { validateApiKey } from '../middleware/auth';
 import { generateToolManifest } from './registry';
-import { runQueryPipeline, buildSystemPrompt } from '../pipelines/query.pipeline';
-import { getLLM } from '../lib/llm';
+import { runQueryPipeline } from '../pipelines/query.pipeline';
 import { logger } from '../middleware/logger';
 import { mcpToolCallTotal } from '../observability/metrics';
 
@@ -96,15 +95,6 @@ export async function mcpRoutes(app: FastifyInstance) {
       rerankTopK: topK,
     });
 
-    // Non-streaming for MCP tool calls
-    const model = getLLM();
-    const result = await model.generateContent({
-      systemInstruction: buildSystemPrompt(pipeline.context),
-      contents: [{ role: 'user', parts: [{ text: body.query }] }],
-    });
-
-    const answer = result.response.text();
-
     mcpToolCallTotal.inc({ tenant_id: tenant.id, tool: toolName });
 
     logger.info(
@@ -112,14 +102,27 @@ export async function mcpRoutes(app: FastifyInstance) {
       'MCP tool call complete'
     );
 
+    // Return raw context chunks — the calling LLM generates the answer.
+    // Never run a second LLM here; that defeats the purpose of MCP.
+    const contextText = pipeline.citations
+      .map((c) =>
+        [
+          `[SOURCE ${c.sourceId}] ${c.sourceFile}${c.page ? ` p.${c.page}` : ''}`,
+          `Namespace: ${c.namespaceSlug}`,
+          c.chunkText,
+        ].join('\n')
+      )
+      .join('\n\n---\n\n');
+
     return reply.send({
       content: [
         {
           type: 'text',
-          text: answer,
+          text: contextText || 'No relevant content found in this namespace.',
         },
       ],
       citations: pipeline.citations,
+      overallConfidence: pipeline.overallConfidence,
       isError: false,
     });
   });

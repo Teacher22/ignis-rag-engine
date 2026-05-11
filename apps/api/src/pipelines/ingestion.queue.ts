@@ -1,7 +1,7 @@
 import { Queue } from 'bullmq';
 import { getRedis } from '../lib/redis';
 
-export const INGESTION_QUEUE_NAME = 'ignis:ingestion';
+export const INGESTION_QUEUE_NAME = 'ignis-ingestion';
 
 export interface IngestionJobData {
   documentId: string;

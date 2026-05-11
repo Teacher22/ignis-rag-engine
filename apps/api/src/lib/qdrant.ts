@@ -2,7 +2,7 @@ import { QdrantClient } from '@qdrant/js-client-rest';
 import { env } from '../config/env';
 
 export const COLLECTION_NAME = 'ignis_chunks';
-export const VECTOR_SIZE = 768; // text-embedding-004
+export const VECTOR_SIZE = 3072; // gemini-embedding-2
 
 let client: QdrantClient | null = null;
 

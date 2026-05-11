@@ -10,9 +10,45 @@ import { ingestionJobStarted, schemaRejectCounter } from '../observability/metri
 
 const prefix = '/api/v1/tenants/:tenantId/namespaces/:namespaceId/documents';
 
+const docParams = {
+  type: 'object',
+  properties: {
+    tenantId: { type: 'string', format: 'uuid' },
+    namespaceId: { type: 'string', format: 'uuid' },
+  },
+};
+
 export async function documentRoutes(app: FastifyInstance) {
   // Upload document
-  app.post(prefix, { preHandler: requireTenantAccess }, async (request, reply) => {
+  app.post(prefix, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Documents'],
+      summary: 'Upload a document',
+      description: 'Upload a file (PDF, TXT, MD, DOCX, CSV, JSON) for async ingestion into Qdrant. Returns a document ID and job ID.',
+      security: [{ bearerAuth: [] }],
+      consumes: ['multipart/form-data'],
+      params: docParams,
+      body: {
+        type: 'object',
+        properties: {
+          file: { type: 'string', format: 'binary', description: 'File to upload (max 100 MB)' },
+        },
+      },
+      response: {
+        202: {
+          type: 'object',
+          properties: {
+            document: { $ref: 'Document#' },
+            jobId: { type: 'string', format: 'uuid' },
+          },
+        },
+        400: { $ref: 'Error#' },
+        404: { $ref: 'Error#' },
+        422: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { tenantId, namespaceId } = request.params as {
       tenantId: string;
       namespaceId: string;
@@ -105,7 +141,20 @@ export async function documentRoutes(app: FastifyInstance) {
   });
 
   // List documents in namespace
-  app.get(prefix, { preHandler: requireTenantAccess }, async (request, reply) => {
+  app.get(prefix, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Documents'],
+      summary: 'List documents in a namespace',
+      security: [{ bearerAuth: [] }],
+      params: docParams,
+      response: {
+        200: { type: 'array', items: { $ref: 'Document#' } },
+        401: { $ref: 'Error#' },
+        403: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { tenantId, namespaceId } = request.params as {
       tenantId: string;
       namespaceId: string;
@@ -121,10 +170,128 @@ export async function documentRoutes(app: FastifyInstance) {
     return result.rows.map(mapDocument);
   });
 
+  // Retry single document
+  app.post(`${prefix}/:documentId/retry`, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Documents'],
+      summary: 'Retry ingestion for a single document',
+      description: 'Re-queues a failed (or already indexed) document for re-embedding. Useful after changing embedding models.',
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        properties: {
+          tenantId: { type: 'string', format: 'uuid' },
+          namespaceId: { type: 'string', format: 'uuid' },
+          documentId: { type: 'string', format: 'uuid' },
+        },
+      },
+      response: {
+        202: {
+          type: 'object',
+          properties: {
+            jobId: { type: 'string', format: 'uuid' },
+            documentId: { type: 'string', format: 'uuid' },
+          },
+        },
+        404: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
+    const { tenantId, namespaceId, documentId } = request.params as {
+      tenantId: string; namespaceId: string; documentId: string;
+    };
+    const db = getDb();
+
+    const docResult = await db.query(
+      'SELECT id, namespace_id FROM documents WHERE id = $1 AND tenant_id = $2',
+      [documentId, tenantId]
+    );
+    if (!docResult.rows[0]) return reply.code(404).send({ error: 'Document not found' });
+
+    return enqueueRetry(db, documentId, tenantId, namespaceId, reply);
+  });
+
+  // Re-index ALL documents in a namespace (e.g. after Qdrant wipe)
+  app.post(
+    '/api/v1/tenants/:tenantId/namespaces/:namespaceId/reindex',
+    {
+      preHandler: requireTenantAccess,
+      schema: {
+        tags: ['Documents'],
+        summary: 'Re-index all documents in a namespace',
+        description: 'Re-queues every document in the namespace for re-embedding. Use after wiping Qdrant or changing embedding models.',
+        security: [{ bearerAuth: [] }],
+        params: docParams,
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              requeued: { type: 'integer', description: 'Number of documents queued' },
+              jobIds: { type: 'array', items: { type: 'string', format: 'uuid' } },
+            },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const { tenantId, namespaceId } = request.params as { tenantId: string; namespaceId: string };
+      const db = getDb();
+
+      const docs = await db.query(
+        `SELECT id FROM documents WHERE namespace_id = $1 AND tenant_id = $2`,
+        [namespaceId, tenantId]
+      );
+
+      const jobs = await Promise.all(
+        docs.rows.map((d: { id: string }) => enqueueRetry(db, d.id, tenantId, namespaceId))
+      );
+
+      return reply.send({ requeued: jobs.length, jobIds: jobs });
+    }
+  );
+
   // Get job status
   app.get(
     '/api/v1/tenants/:tenantId/jobs/:jobId',
-    { preHandler: requireTenantAccess },
+    {
+      preHandler: requireTenantAccess,
+      schema: {
+        tags: ['Jobs'],
+        summary: 'Get ingestion job status',
+        description: 'Poll the status of a background ingestion job returned from document upload.',
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: {
+            tenantId: { type: 'string', format: 'uuid' },
+            jobId: { type: 'string', format: 'uuid' },
+          },
+        },
+        response: {
+          200: {
+            type: 'object',
+            properties: {
+              jobId: { type: 'string', format: 'uuid' },
+              documentId: { type: 'string', format: 'uuid' },
+              status: { type: 'string', enum: ['queued', 'processing', 'completed', 'failed'] },
+              attempts: { type: 'integer' },
+              document: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  filename: { type: 'string' },
+                  status: { type: 'string' },
+                  chunkCount: { type: 'integer', nullable: true },
+                  error: { type: 'string', nullable: true },
+                },
+              },
+            },
+          },
+          404: { $ref: 'Error#' },
+        },
+      },
+    },
     async (request, reply) => {
       const { tenantId, jobId } = request.params as { tenantId: string; jobId: string };
       const db = getDb();
@@ -158,6 +325,34 @@ export async function documentRoutes(app: FastifyInstance) {
       };
     }
   );
+}
+
+async function enqueueRetry(
+  db: ReturnType<typeof import('../lib/db').getDb>,
+  documentId: string,
+  tenantId: string,
+  namespaceId: string,
+  reply?: import('fastify').FastifyReply
+) {
+  // Reset document status
+  await db.query(
+    `UPDATE documents SET status = 'pending', error = NULL, chunk_count = NULL WHERE id = $1`,
+    [documentId]
+  );
+
+  // Create new job row
+  const jobId = uuidv4();
+  await db.query(
+    `INSERT INTO ingestion_jobs (id, document_id, status) VALUES ($1, $2, 'queued')`,
+    [jobId, documentId]
+  );
+
+  const queue = getIngestionQueue();
+  const bullJob = await queue.add('ingest-document', { documentId, tenantId, namespaceId }, { jobId });
+  await db.query('UPDATE ingestion_jobs SET bullmq_job_id = $1 WHERE id = $2', [bullJob.id, jobId]);
+
+  if (reply) return reply.code(202).send({ jobId, documentId });
+  return jobId;
 }
 
 function mapDocument(row: Record<string, unknown>) {

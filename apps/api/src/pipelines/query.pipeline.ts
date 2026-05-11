@@ -5,17 +5,14 @@ import { cosineSimilarity } from '../services/cosine';
 import { rerankDocuments } from '../services/reranker';
 import { env } from '../config/env';
 import { Citation } from '@ignis/shared';
-import { encode } from 'tiktoken';
+import { get_encoding } from 'tiktoken';
+
+const enc = get_encoding('cl100k_base');
 
 // ─── Token utilities ──────────────────────────────────────────────────────────
 
 export function estimateTokens(text: string): number {
-  const enc = encode(text);
-  const n = enc.length;
-  if (typeof (enc as unknown as { free?: () => void }).free === 'function') {
-    (enc as unknown as { free: () => void }).free();
-  }
-  return n;
+  return enc.encode(text).length;
 }
 
 // ─── System prompt ────────────────────────────────────────────────────────────
@@ -33,8 +30,8 @@ ${context}`;
 
 // ─── Context builder ──────────────────────────────────────────────────────────
 
-const MODEL_CONTEXT_LIMIT = 200000;
-const OUTPUT_RESERVE = 4000;
+const MODEL_CONTEXT_LIMIT = 1_048_576; // Gemini 3.1 Flash Lite — 1M token window
+const OUTPUT_RESERVE = 8000;
 
 interface ContextResult {
   context: string;
@@ -84,6 +81,7 @@ export function buildContext(
       documentId: p.document_id,
       namespaceId: p.namespace_id,
       tenantId: p.tenant_id,
+      score: chunk.score != null ? Math.round(chunk.score * 100) / 100 : undefined,
     });
   }
 
@@ -115,6 +113,7 @@ export interface QueryPipelineResult {
   chunksAfterRerank: number;
   contextTokens: number;
   queryVector: number[];
+  overallConfidence: number;
 }
 
 export interface QueryPipelineOptions {
@@ -151,14 +150,14 @@ export async function runQueryPipeline(
   } else {
     // Cosine similarity against description embeddings
     const result = await db.query(
-      `SELECT id, slug, description_embedding::text AS embedding_text
+      `SELECT id, slug, description_embedding
        FROM namespaces
        WHERE tenant_id = $1 AND active = true AND description_embedding IS NOT NULL`,
       [tenantId]
     );
 
     const scored = result.rows.map((ns) => {
-      const vec: number[] = JSON.parse(ns.embedding_text);
+      const vec: number[] = ns.description_embedding; // pg returns FLOAT8[] as native JS array
       return { id: ns.id, slug: ns.slug, score: cosineSimilarity(queryVector, vec) };
     });
 
@@ -194,8 +193,8 @@ export async function runQueryPipeline(
       score: r.score,
     }));
 
-  // Step 4: Rerank
-  let finalChunks: typeof allChunks = [];
+  // Step 4: Rerank — preserve relevanceScore alongside each chunk
+  let finalChunks: Array<{ payload: ChunkPayload; vector: number[]; score: number }> = [];
   if (allChunks.length > 0) {
     const reranked = await rerankDocuments(
       query,
@@ -205,7 +204,10 @@ export async function runQueryPipeline(
 
     finalChunks = reranked
       .filter((r) => r.relevanceScore > env.RERANK_THRESHOLD)
-      .map((r) => allChunks[r.index]);
+      .map((r) => ({
+        ...allChunks[r.index],
+        score: r.relevanceScore, // overwrite Qdrant cosine score with reranker score
+      }));
   }
 
   // Step 5: Deduplication
@@ -220,6 +222,14 @@ export async function runQueryPipeline(
     queryTokens
   );
 
+  // Overall confidence = mean of citation scores (0–1), rounded to 2dp
+  const overallConfidence =
+    citations.length > 0
+      ? Math.round(
+          (citations.reduce((sum, c) => sum + (c.score ?? 0), 0) / citations.length) * 100
+        ) / 100
+      : 0;
+
   return {
     context,
     citations,
@@ -229,5 +239,6 @@ export async function runQueryPipeline(
     chunksAfterRerank: deduplicated.length,
     contextTokens: tokenCount,
     queryVector,
+    overallConfidence,
   };
 }

@@ -1,6 +1,3 @@
--- Enable pgvector extension
-CREATE EXTENSION IF NOT EXISTS vector;
-
 -- Tenants
 CREATE TABLE tenants (
   id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -17,7 +14,7 @@ CREATE TABLE namespaces (
   name                  TEXT NOT NULL,
   slug                  TEXT NOT NULL,
   description           TEXT NOT NULL,
-  description_embedding vector(1536),
+  description_embedding FLOAT8[],
   schema_config         JSONB,
   active                BOOLEAN NOT NULL DEFAULT true,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),

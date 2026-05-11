@@ -1,5 +1,7 @@
-import { Redis } from 'bullmq';
+import Redis from 'ioredis';
 import { env } from '../config/env';
+
+export type { Redis };
 
 let redisConnection: Redis | null = null;
 

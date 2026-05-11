@@ -27,11 +27,39 @@ const UpdateNamespaceSchema = z.object({
   active: z.boolean().optional(),
 });
 
+const nsParams = {
+  type: 'object',
+  properties: {
+    tenantId: { type: 'string', format: 'uuid' },
+  },
+};
+
+const nsWithIdParams = {
+  type: 'object',
+  properties: {
+    tenantId: { type: 'string', format: 'uuid' },
+    namespaceId: { type: 'string', format: 'uuid' },
+  },
+};
+
 export async function namespaceRoutes(app: FastifyInstance) {
   const prefix = '/api/v1/tenants/:tenantId/namespaces';
 
   // List namespaces
-  app.get(prefix, { preHandler: requireTenantAccess }, async (request, reply) => {
+  app.get(prefix, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Namespaces'],
+      summary: 'List all namespaces for a tenant',
+      security: [{ bearerAuth: [] }],
+      params: nsParams,
+      response: {
+        200: { type: 'array', items: { $ref: 'Namespace#' } },
+        401: { $ref: 'Error#' },
+        403: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { tenantId } = request.params as { tenantId: string };
     const db = getDb();
 
@@ -45,7 +73,39 @@ export async function namespaceRoutes(app: FastifyInstance) {
   });
 
   // Create namespace
-  app.post(prefix, { preHandler: requireTenantAccess }, async (request, reply) => {
+  app.post(prefix, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Namespaces'],
+      summary: 'Create a namespace',
+      description: 'Creates a knowledge-base namespace. The description is embedded automatically and used for query routing.',
+      security: [{ bearerAuth: [] }],
+      params: nsParams,
+      body: {
+        type: 'object',
+        required: ['name', 'slug', 'description'],
+        properties: {
+          name: { type: 'string', minLength: 1, maxLength: 255 },
+          slug: { type: 'string', minLength: 1, maxLength: 100, pattern: '^[a-z0-9-]+$', description: 'Lowercase alphanumeric with hyphens' },
+          description: { type: 'string', minLength: 50, maxLength: 500, description: 'Semantic description used for namespace routing (min 50 chars)' },
+          schemaConfig: {
+            type: 'object',
+            nullable: true,
+            properties: {
+              allowed_types: { type: 'array', items: { type: 'string' } },
+              required_metadata: { type: 'array', items: { type: 'string' } },
+              max_file_size_mb: { type: 'number' },
+            },
+          },
+        },
+      },
+      response: {
+        201: { $ref: 'Namespace#' },
+        400: { $ref: 'Error#' },
+        409: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { tenantId } = request.params as { tenantId: string };
     const body = CreateNamespaceSchema.parse(request.body);
     const db = getDb();
@@ -61,18 +121,17 @@ export async function namespaceRoutes(app: FastifyInstance) {
 
     // Embed description synchronously — routing depends on it immediately
     const embedding = await embedText(body.description);
-    const embeddingStr = `[${embedding.join(',')}]`;
 
     const result = await db.query(
       `INSERT INTO namespaces (tenant_id, name, slug, description, description_embedding, schema_config)
-       VALUES ($1, $2, $3, $4, $5::vector, $6)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING id, tenant_id, name, slug, description, schema_config, active, created_at, updated_at`,
       [
         tenantId,
         body.name,
         body.slug,
         body.description,
-        embeddingStr,
+        embedding,           // pg driver sends number[] as FLOAT8[] natively
         body.schemaConfig ? JSON.stringify(body.schemaConfig) : null,
       ]
     );
@@ -81,7 +140,19 @@ export async function namespaceRoutes(app: FastifyInstance) {
   });
 
   // Get namespace by ID
-  app.get(`${prefix}/:namespaceId`, { preHandler: requireTenantAccess }, async (request, reply) => {
+  app.get(`${prefix}/:namespaceId`, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Namespaces'],
+      summary: 'Get a namespace by ID',
+      security: [{ bearerAuth: [] }],
+      params: nsWithIdParams,
+      response: {
+        200: { $ref: 'Namespace#' },
+        404: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { tenantId, namespaceId } = request.params as { tenantId: string; namespaceId: string };
     const db = getDb();
 
@@ -99,7 +170,29 @@ export async function namespaceRoutes(app: FastifyInstance) {
   });
 
   // Update namespace
-  app.patch(`${prefix}/:namespaceId`, { preHandler: requireTenantAccess }, async (request, reply) => {
+  app.patch(`${prefix}/:namespaceId`, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Namespaces'],
+      summary: 'Update a namespace',
+      security: [{ bearerAuth: [] }],
+      params: nsWithIdParams,
+      body: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', minLength: 1, maxLength: 255 },
+          description: { type: 'string', minLength: 50, maxLength: 500 },
+          schemaConfig: { type: 'object', nullable: true },
+          active: { type: 'boolean' },
+        },
+      },
+      response: {
+        200: { $ref: 'Namespace#' },
+        400: { $ref: 'Error#' },
+        404: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { tenantId, namespaceId } = request.params as { tenantId: string; namespaceId: string };
     const body = UpdateNamespaceSchema.parse(request.body);
     const db = getDb();
@@ -123,8 +216,8 @@ export async function namespaceRoutes(app: FastifyInstance) {
       values.push(body.description);
       // Re-embed when description changes
       const embedding = await embedText(body.description);
-      updates.push(`description_embedding = $${idx++}::vector`);
-      values.push(`[${embedding.join(',')}]`);
+      updates.push(`description_embedding = $${idx++}`);
+      values.push(embedding);
     }
     if (body.schemaConfig !== undefined) {
       updates.push(`schema_config = $${idx++}`);
@@ -147,7 +240,19 @@ export async function namespaceRoutes(app: FastifyInstance) {
   });
 
   // Delete namespace
-  app.delete(`${prefix}/:namespaceId`, { preHandler: requireTenantAccess }, async (request, reply) => {
+  app.delete(`${prefix}/:namespaceId`, {
+    preHandler: requireTenantAccess,
+    schema: {
+      tags: ['Namespaces'],
+      summary: 'Delete a namespace',
+      security: [{ bearerAuth: [] }],
+      params: nsWithIdParams,
+      response: {
+        204: { type: 'null', description: 'Deleted successfully' },
+        404: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { tenantId, namespaceId } = request.params as { tenantId: string; namespaceId: string };
     const db = getDb();
 

@@ -96,4 +96,16 @@ export const api = {
     request<import('@ignis/shared').JobStatusResponse>(
       `/tenants/${tenantId}/jobs/${jobId}`
     ),
+
+  retryDocument: (tenantId: string, namespaceId: string, documentId: string) =>
+    request<{ jobId: string; documentId: string }>(
+      `/tenants/${tenantId}/namespaces/${namespaceId}/documents/${documentId}/retry`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
+
+  reindexNamespace: (tenantId: string, namespaceId: string) =>
+    request<{ requeued: number; jobIds: string[] }>(
+      `/tenants/${tenantId}/namespaces/${namespaceId}/reindex`,
+      { method: 'POST', body: JSON.stringify({}) }
+    ),
 };

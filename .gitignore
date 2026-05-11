@@ -2,6 +2,7 @@ node_modules/
 dist/
 .env
 *.env.local
+.env.prod          # real prod secrets — never commit
 *.log
 .DS_Store
 coverage/

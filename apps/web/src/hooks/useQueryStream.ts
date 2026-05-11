@@ -7,6 +7,7 @@ type Status = 'idle' | 'streaming' | 'done' | 'error';
 export function useQueryStream(tenantId: string) {
   const [tokens, setTokens] = useState('');
   const [citations, setCitations] = useState<Citation[]>([]);
+  const [overallConfidence, setOverallConfidence] = useState<number | null>(null);
   const [status, setStatus] = useState<Status>('idle');
   const [error, setError] = useState<string | null>(null);
 
@@ -15,6 +16,7 @@ export function useQueryStream(tenantId: string) {
       setStatus('streaming');
       setTokens('');
       setCitations([]);
+      setOverallConfidence(null);
       setError(null);
 
       try {
@@ -53,13 +55,14 @@ export function useQueryStream(tenantId: string) {
             try {
               const data = JSON.parse(line.slice(6)) as
                 | { token: string }
-                | { done: true; citations: Citation[] }
+                | { done: true; citations: Citation[]; overallConfidence?: number }
                 | { error: string };
 
               if ('token' in data) {
                 setTokens((prev) => prev + data.token);
               } else if ('done' in data && data.done) {
                 setCitations(data.citations);
+                setOverallConfidence(data.overallConfidence ?? null);
                 setStatus('done');
               } else if ('error' in data) {
                 throw new Error(data.error);
@@ -83,9 +86,10 @@ export function useQueryStream(tenantId: string) {
   const reset = useCallback(() => {
     setTokens('');
     setCitations([]);
+    setOverallConfidence(null);
     setStatus('idle');
     setError(null);
   }, []);
 
-  return { tokens, citations, status, error, run, reset };
+  return { tokens, citations, overallConfidence, status, error, run, reset };
 }

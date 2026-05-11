@@ -23,7 +23,56 @@ const QuerySchema = z.object({
 export async function queryRoutes(app: FastifyInstance) {
   app.post(
     '/api/v1/tenants/:tenantId/query',
-    { preHandler: requireTenantAccess },
+    {
+      preHandler: requireTenantAccess,
+      schema: {
+        tags: ['Query'],
+        summary: 'Run a RAG query',
+        description: `Embeds the query, routes to the best namespaces, retrieves and reranks chunks, then streams or returns a Gemini 2.0 Flash answer with citations.
+
+**Streaming (default, stream: true):** Returns \`text/event-stream\`. Each event is \`data: {"token":"..."}\`. The final event is \`data: {"done":true, "citations":[...]}\`.
+
+**Non-streaming (stream: false):** Returns JSON with \`answer\`, \`citations\`, and pipeline metadata.`,
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { tenantId: { type: 'string', format: 'uuid' } },
+        },
+        body: {
+          type: 'object',
+          required: ['query'],
+          properties: {
+            query: { type: 'string', minLength: 1, maxLength: 4000, description: 'Natural language question' },
+            namespaceIds: {
+              type: 'array',
+              items: { type: 'string', format: 'uuid' },
+              description: 'Explicit namespace IDs to search. Leave empty to use automatic routing.',
+            },
+            topKNamespaces: { type: 'integer', minimum: 1, maximum: 10, default: 3, description: 'Max namespaces to route to' },
+            topNChunks: { type: 'integer', minimum: 1, maximum: 50, default: 15, description: 'Chunks retrieved per namespace' },
+            rerankTopK: { type: 'integer', minimum: 1, maximum: 20, default: 5, description: 'Top-K chunks kept after reranking' },
+            stream: { type: 'boolean', default: true, description: 'Enable SSE streaming' },
+          },
+        },
+        response: {
+          200: {
+            description: 'Non-streaming JSON response (stream: false only)',
+            type: 'object',
+            properties: {
+              answer: { type: 'string' },
+              citations: { type: 'array', items: { $ref: 'Citation#' } },
+              namespacesSelected: { type: 'array', items: { type: 'string' } },
+              chunksRetrieved: { type: 'integer' },
+              chunksAfterRerank: { type: 'integer' },
+              totalTokens: { type: 'integer' },
+              durationMs: { type: 'integer' },
+            },
+          },
+          401: { $ref: 'Error#' },
+          403: { $ref: 'Error#' },
+        },
+      },
+    },
     async (request, reply) => {
       const { tenantId } = request.params as { tenantId: string };
       const requestId = request.id;
@@ -94,7 +143,11 @@ export async function queryRoutes(app: FastifyInstance) {
         });
 
         reply.raw.write(
-          `data: ${JSON.stringify({ done: true, citations: pipeline.citations })}\n\n`
+          `data: ${JSON.stringify({
+            done: true,
+            citations: pipeline.citations,
+            overallConfidence: pipeline.overallConfidence,
+          })}\n\n`
         );
         reply.raw.end();
       } else {
@@ -115,6 +168,7 @@ export async function queryRoutes(app: FastifyInstance) {
           namespacesSelected: pipeline.namespacesSelected,
           chunksRetrieved: pipeline.chunksRetrieved,
           chunksAfterRerank: pipeline.chunksAfterRerank,
+          overallConfidence: pipeline.overallConfidence,
           totalTokens,
           durationMs: duration,
         };

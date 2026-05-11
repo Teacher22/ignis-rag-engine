@@ -1,40 +1,44 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
 
-export const EMBEDDING_MODEL = 'text-embedding-004';
-export const EMBEDDING_DIMENSIONS = 768;
+export const EMBEDDING_MODEL = 'gemini-embedding-2';
+export const EMBEDDING_DIMENSIONS = 3072;
 
-let genAI: GoogleGenerativeAI | null = null;
+const BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-function getGenAI(): GoogleGenerativeAI {
-  if (!genAI) {
-    genAI = new GoogleGenerativeAI(env.GOOGLE_API_KEY);
+async function callEmbedAPI(text: string): Promise<number[]> {
+  const url = `${BASE_URL}/${EMBEDDING_MODEL}:embedContent?key=${env.GOOGLE_API_KEY}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: `models/${EMBEDDING_MODEL}`,
+      content: { parts: [{ text }] },
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Embedding API error ${res.status}: ${err}`);
   }
-  return genAI;
+
+  const data = (await res.json()) as { embedding: { values: number[] } };
+  return data.embedding.values;
 }
 
 export async function embedText(text: string): Promise<number[]> {
-  const model = getGenAI().getGenerativeModel({ model: EMBEDDING_MODEL });
-  const result = await model.embedContent(text);
-  return result.embedding.values;
+  return callEmbedAPI(text);
 }
 
 export async function embedBatch(texts: string[]): Promise<number[][]> {
-  const model = getGenAI().getGenerativeModel({ model: EMBEDDING_MODEL });
-
-  // Google's batchEmbedContents accepts up to 100 requests at once
-  const BATCH_LIMIT = 100;
+  // gemini-embedding-2 only supports embedContent (not batchEmbedContents)
+  // Run in parallel with a concurrency limit to avoid rate limits
+  const CONCURRENCY = 10;
   const results: number[][] = [];
 
-  for (let i = 0; i < texts.length; i += BATCH_LIMIT) {
-    const slice = texts.slice(i, i + BATCH_LIMIT);
-    const response = await model.batchEmbedContents({
-      requests: slice.map((text) => ({
-        model: `models/${EMBEDDING_MODEL}`,
-        content: { role: 'user', parts: [{ text }] },
-      })),
-    });
-    results.push(...response.embeddings.map((e) => e.values));
+  for (let i = 0; i < texts.length; i += CONCURRENCY) {
+    const batch = texts.slice(i, i + CONCURRENCY);
+    const embeddings = await Promise.all(batch.map(callEmbedAPI));
+    results.push(...embeddings);
   }
 
   return results;

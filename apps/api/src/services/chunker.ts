@@ -1,4 +1,6 @@
-import { encode } from 'tiktoken';
+import { get_encoding } from 'tiktoken';
+
+const enc = get_encoding('cl100k_base');
 
 const CHUNK_SIZE = 800;
 const CHUNK_OVERLAP = 120;
@@ -12,13 +14,7 @@ export interface Chunk {
 }
 
 function countTokens(text: string): number {
-  const enc = encode(text);
-  const count = enc.length;
-  // tiktoken returns a Uint32Array; free it if possible
-  if (typeof (enc as unknown as { free?: () => void }).free === 'function') {
-    (enc as unknown as { free: () => void }).free();
-  }
-  return count;
+  return enc.encode(text).length;
 }
 
 function splitOnSeparator(text: string, separator: string): string[] {

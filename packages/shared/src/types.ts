@@ -68,6 +68,8 @@ export interface Citation {
   documentId: string;
   namespaceId: string;
   tenantId: string;
+  /** Reranker relevance score 0–1 (higher = more relevant) */
+  score?: number;
 }
 
 export interface QueryResponse {
@@ -78,6 +80,8 @@ export interface QueryResponse {
   chunksAfterRerank: number;
   totalTokens?: number;
   durationMs: number;
+  /** Mean reranker score across all returned citations (0–1) */
+  overallConfidence?: number;
 }
 
 // ─── SSE Event Types ──────────────────────────────────────────────────────────

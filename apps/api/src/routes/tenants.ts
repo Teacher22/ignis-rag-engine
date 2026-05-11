@@ -14,7 +14,32 @@ const CreateTenantSchema = z.object({
 
 export async function tenantRoutes(app: FastifyInstance) {
   // Create tenant (admin only — no auth for bootstrap, in prod restrict this)
-  app.post('/api/v1/tenants', async (request, reply) => {
+  app.post('/api/v1/tenants', {
+    schema: {
+      tags: ['Tenants'],
+      summary: 'Create a new tenant',
+      description: 'Bootstrap endpoint — creates a tenant and returns a one-time API key.',
+      security: [],
+      body: {
+        type: 'object',
+        required: ['name'],
+        properties: {
+          name: { type: 'string', minLength: 1, maxLength: 255, description: 'Tenant display name' },
+          plan: { type: 'string', enum: ['free', 'pro', 'enterprise'], default: 'free' },
+        },
+      },
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            tenant: { $ref: 'Tenant#' },
+            apiKey: { type: 'string', description: 'Returned ONCE — store it securely' },
+          },
+        },
+        400: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const body = CreateTenantSchema.parse(request.body);
     const db = getDb();
 
@@ -43,7 +68,23 @@ export async function tenantRoutes(app: FastifyInstance) {
   // Get tenant by ID (requires JWT)
   app.get(
     '/api/v1/tenants/:tenantId',
-    { preHandler: requireJWT },
+    {
+      preHandler: requireJWT,
+      schema: {
+        tags: ['Tenants'],
+        summary: 'Get tenant by ID',
+        security: [{ bearerAuth: [] }],
+        params: {
+          type: 'object',
+          properties: { tenantId: { type: 'string', format: 'uuid' } },
+        },
+        response: {
+          200: { $ref: 'Tenant#' },
+          403: { $ref: 'Error#' },
+          404: { $ref: 'Error#' },
+        },
+      },
+    },
     async (request, reply) => {
       const { tenantId } = request.params as { tenantId: string };
 
@@ -72,7 +113,32 @@ export async function tenantRoutes(app: FastifyInstance) {
   );
 
   // Login — issue JWT from API key
-  app.post('/api/v1/auth/login', async (request, reply) => {
+  app.post('/api/v1/auth/login', {
+    schema: {
+      tags: ['Auth'],
+      summary: 'Exchange API key for a JWT',
+      description: 'Use the API key returned from tenant creation to get a short-lived JWT.',
+      security: [],
+      body: {
+        type: 'object',
+        required: ['apiKey'],
+        properties: {
+          apiKey: { type: 'string', description: 'ignis_* API key from tenant creation' },
+        },
+      },
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            token: { type: 'string', description: 'Bearer JWT — use in Authorization header' },
+            tenant: { $ref: 'Tenant#' },
+          },
+        },
+        400: { $ref: 'Error#' },
+        401: { $ref: 'Error#' },
+      },
+    },
+  }, async (request, reply) => {
     const { apiKey } = request.body as { apiKey: string };
     if (!apiKey) {
       return reply.code(400).send({ error: 'apiKey required' });
