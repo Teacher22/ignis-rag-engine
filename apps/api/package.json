@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "node --env-file=.env -r tsx/cjs --watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc -b",
     "start": "node dist/index.js",
     "migrate": "node --env-file=.env -r tsx/cjs scripts/migrate.ts",
     "setup:qdrant": "node --env-file=.env -r tsx/cjs scripts/setup-qdrant.ts",

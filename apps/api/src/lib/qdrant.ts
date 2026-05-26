@@ -13,7 +13,7 @@ export function getQdrant(): QdrantClient {
   return client;
 }
 
-export interface ChunkPayload {
+export interface ChunkPayload extends Record<string, unknown> {
   tenant_id: string;
   namespace_id: string;
   namespace_slug: string;

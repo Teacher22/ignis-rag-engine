@@ -13,8 +13,7 @@ RUN npm ci
 COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
 
-# Compile shared types then API
-RUN npx tsc -p packages/shared/tsconfig.json
+# Compile shared + API (tsc -b resolves project references in order)
 RUN npm run build --workspace=apps/api
 
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
