@@ -17,6 +17,6 @@
       "@ignis/shared": ["../../packages/shared/src"]
     }
   },
-  "include": ["src", "scripts"],
+  "include": ["src"],
   "exclude": ["node_modules", "dist"]
 }
