@@ -52,10 +52,10 @@ jobs:
             set -e
             cd ~/ignis
 
-            echo "$GHCR_TOKEN" | docker login ghcr.io -u teacher22 --password-stdin
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u ${{ github.repository_owner }} --password-stdin
 
             export WEB_IMAGE_TAG=$IMAGE_TAG
-            export GITHUB_REPOSITORY=${{ github.repository }}
+            export GITHUB_REPOSITORY=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
 
             echo "▶ Deploying Web — image tag: $IMAGE_TAG"
 

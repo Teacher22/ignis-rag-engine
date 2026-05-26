@@ -28,6 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Set lowercased image name
+        run: |
+          echo "IMAGE_NAME=$(echo '${{ github.repository }}/ignis-web' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - name: Read version
         id: version
         run: echo "tag=v$(cat apps/web/VERSION)" >> $GITHUB_OUTPUT

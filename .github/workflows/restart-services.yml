@@ -39,6 +39,8 @@ jobs:
             set -e
             cd ~/ignis
 
+            export GITHUB_REPOSITORY=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+
             COMPOSE="docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml"
             ACTION="${{ inputs.action }}"
             SERVICE="${{ inputs.service }}"
