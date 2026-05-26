@@ -30,7 +30,7 @@ export function useQueryStream(tenantId: string) {
           },
           body: JSON.stringify({
             query,
-            namespace_ids: namespaceIds,
+            namespaceIds: namespaceIds,
             stream: true,
           }),
         });
@@ -42,18 +42,21 @@ export function useQueryStream(tenantId: string) {
 
         const reader = response.body!.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const text = decoder.decode(value, { stream: true });
-          const lines = text.split('\n');
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
 
           for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
+            const trimmed = line.trim();
+            if (!trimmed || !trimmed.startsWith('data: ')) continue;
             try {
-              const data = JSON.parse(line.slice(6)) as
+              const data = JSON.parse(trimmed.slice(6)) as
                 | { token: string }
                 | { done: true; citations: Citation[]; overallConfidence?: number }
                 | { error: string };
