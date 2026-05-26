@@ -1,0 +1,68 @@
+name: API — Deploy to VM
+
+on:
+  workflow_run:
+    workflows: ["API — Build and push image"]
+    branches: [main]
+    types: [completed]
+
+jobs:
+  deploy:
+    name: Deploy to VM
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get short SHA
+        id: vars
+        run: echo "sha=$(echo '${{ github.event.workflow_run.head_sha }}' | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: SCP compose files to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          source:   "infra/docker-compose.yml,infra/docker-compose.prod.yml"
+          target:   "~/ignis"
+
+      - name: SSH → pull image + restart api & worker
+        uses: appleboy/ssh-action@v1
+        with:
+          host:     ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          envs:     GHCR_TOKEN
+          script: |
+            set -e
+            cd ~/ignis
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u teacher22 --password-stdin
+
+            export API_IMAGE_TAG=sha-${{ steps.vars.outputs.sha }}
+            export GITHUB_REPOSITORY=${{ github.repository }}
+
+            docker compose \
+              -f infra/docker-compose.yml \
+              -f infra/docker-compose.prod.yml \
+              pull api worker
+
+            docker compose \
+              -f infra/docker-compose.yml \
+              -f infra/docker-compose.prod.yml \
+              up -d --no-deps api worker
+
+            echo "Waiting for API health..."
+            for i in $(seq 1 12); do
+              if curl -sf http://localhost:3001/health; then
+                echo "API is healthy"
+                exit 0
+              fi
+              echo "Attempt $i/12 — retrying in 5s"
+              sleep 5
+            done
+            echo "API failed to become healthy" && exit 1
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

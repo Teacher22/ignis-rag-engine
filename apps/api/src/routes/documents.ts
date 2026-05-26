@@ -29,12 +29,9 @@ export async function documentRoutes(app: FastifyInstance) {
       security: [{ bearerAuth: [] }],
       consumes: ['multipart/form-data'],
       params: docParams,
-      body: {
-        type: 'object',
-        properties: {
-          file: { type: 'string', format: 'binary', description: 'File to upload (max 100 MB)' },
-        },
-      },
+      // No body schema — @fastify/multipart handles the body via request.file()
+      // Adding a JSON body schema here causes FST_ERR_VALIDATION because
+      // multipart content is never parsed into a plain object
       response: {
         202: {
           type: 'object',
