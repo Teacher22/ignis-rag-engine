@@ -1,22 +1,35 @@
-name: Restart Services
+name: Manage Services
 
 on:
   workflow_dispatch:
     inputs:
-      service:
-        description: 'Service to restart (api / worker / web / all)'
+      action:
+        description: "Action to perform"
         required: true
-        default: 'all'
         type: choice
-        options: [all, api, worker, web, postgres, qdrant, redis]
+        default: restart
+        options:
+          - restart
+          - stop
+          - start
+      service:
+        description: "Service to target"
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - api
+          - worker
+          - web
 
 jobs:
-  restart:
-    name: Restart ${{ github.event.inputs.service }}
+  manage:
+    name: "${{ inputs.action }} — ${{ inputs.service }}"
     runs-on: ubuntu-latest
 
     steps:
-      - name: SSH → restart
+      - name: SSH → ${{ inputs.action }} ${{ inputs.service }}
         uses: appleboy/ssh-action@v1
         with:
           host:     ${{ secrets.VM_HOST }}
@@ -27,13 +40,14 @@ jobs:
             cd ~/ignis
 
             COMPOSE="docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml"
-            SERVICE="${{ github.event.inputs.service }}"
+            ACTION="${{ inputs.action }}"
+            SERVICE="${{ inputs.service }}"
 
             if [ "$SERVICE" = "all" ]; then
-              $COMPOSE restart
+              $COMPOSE $ACTION
             else
-              $COMPOSE restart $SERVICE
+              $COMPOSE $ACTION $SERVICE
             fi
 
             echo "Done — current status:"
-            $COMPOSE ps
+            $COMPOSE ps --format '  {{.Name}}: {{.Image}}  [{{.Status}}]'
