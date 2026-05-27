@@ -12,7 +12,6 @@ COPY apps/web/package.json ./apps/web/
 RUN npm ci
 
 # Copy full source
-COPY tsconfig.json ./
 COPY packages/shared ./packages/shared
 COPY apps/api ./apps/api
 COPY apps/web ./apps/web
