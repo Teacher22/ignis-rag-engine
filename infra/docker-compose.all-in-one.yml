@@ -1,0 +1,90 @@
+version: '3.9'
+
+services:
+  # ── Separate Infrastructure Services ───────────────────────────────────────
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ignis
+      POSTGRES_USER: ignis
+      POSTGRES_PASSWORD: ignis
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ignis']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - '6333:6333'
+      - '6334:6334'
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -f http://localhost:6333/health || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Unified Application Container ──────────────────────────────────────────
+  # Runs: Frontend (Nginx), API, Worker, and Reranker
+  app:
+    build:
+      context: ../
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - '80:80'       # Frontend + Proxied API
+      - '3001:3001'   # Direct Fastify API access (optional)
+      - '8001:8001'   # Direct Reranker FastAPI access (optional)
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      
+      # Startup Initialization Flags
+      - RUN_MIGRATIONS=true
+      - SETUP_QDRANT=true
+      - SEED_DB=true
+
+      # Local Service Routing
+      - RERANKER_URL=http://127.0.0.1:8001
+      - PORT=3001 # API local port
+
+      # Database and Infrastructure Connections
+      - DATABASE_URL=postgresql://ignis:ignis@postgres:5432/ignis
+      - REDIS_URL=redis://redis:6379
+      - QDRANT_URL=http://qdrant:6333
+
+      # Required Configuration (Override these with real keys/buckets)
+      - GOOGLE_API_KEY=AIzaSyYourKeyHere_MinimumScale
+      - JWT_SECRET=change_me_to_a_long_random_string_minimum_32_characters
+      - GCS_BUCKET=your_gcs_bucket_name
+      # - GOOGLE_APPLICATION_CREDENTIALS_JSON={"type":"service_account",...}
+
+volumes:
+  pgdata:
+  qdrant_data:
